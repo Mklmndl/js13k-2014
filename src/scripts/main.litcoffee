@@ -7,6 +7,12 @@ need a few basic functions to help with that.
     pick = (choices) ->
       choices[random(0, choices.length - 1)]
 
+Being able to merge objects can also be useful.
+
+    merge = (obj, sources...) ->
+      obj[key] = value for own key, value of src for src in sources
+      obj
+
 Two helpers to get the column (x) and the row (y) of a tile with its index...
 
     getColumn = (index, columns) ->
@@ -21,7 +27,7 @@ Two helpers to get the column (x) and the row (y) of a tile with its index...
       y * columns + x
 
 The functions checking for matches will look for matches within the current
-column *or* row.
+column **or** row.
 The alogrithm to check for a match is as follow: we count matches until there
 aren't anymore or we've encountered the end (or beginning) of the line, and we
 do this backwards and forwards the given tile. It will return `true` if we have
@@ -85,23 +91,39 @@ Also, the tricky part here is that we don't want diagonal matches.
       true
 
 Drawing the board is as simple as iterating through all the tiles contained in
-the board array. We just need to take care of drawing it *where* we want to
-(offsets) and *how* (tile size) we want to.
+the board array. We just need to take care of drawing it **where** we want to
+(offsets) and **how** (tile size) we want to.
 
-    drawBoard = (board, columns, ctx, textures, options = {}) ->
-      {offsetX, offsetY, tileWidth, tileHeight} = options
-      offsetX ?= 0
-      offsetY ?= 0
-      tileWidth ?= 32
-      tileHeight ?= 32
+    drawBoard = (board, columns, ctx, textures, options) ->
+      for i in [0...board.length]
+        drawTile(ctx, i, columns, textures[board[i]] ? '#000', options)
 
-      for i in [0..board.length]
-        ctx.fillStyle = textures[board[i]] ? '#000'
-        ctx.fillRect(
-          offsetX + getColumn(i, columns) * tileWidth
-          offsetY + getRow(i, columns) * tileHeight
-          tileWidth, tileHeight
-        )
+    drawTile = (ctx, index, columns, color, options) ->
+      {
+        borderColor
+        borderSize
+        offsetX
+        offsetY
+        tileWidth
+        tileHeight
+      } = options
+
+      ctx.fillStyle = color
+      ctx.fillRect(
+        offsetX + getColumn(index, columns) * tileWidth
+        offsetY + getRow(index, columns) * tileHeight
+        tileWidth, tileHeight
+      )
+      ctx.lineWidth = borderSize
+      ctx.strokeStyle = borderColor
+      ctx.strokeRect(
+        offsetX + getColumn(index, columns) * tileWidth
+        offsetY + getRow(index, columns) * tileHeight
+        tileWidth, tileHeight
+      )
+
+    drawSelectedTile = (ctx, columns, tile, options) ->
+      drawTile(ctx, tile, columns, 'rgba(0,0,0,0.5)', options) if tile?
 
 The constants of the game speak mainly for themselves.
 We start by defining the size of the game screen and the targeted FPS.
@@ -126,7 +148,7 @@ Now we define the available types of tiles and their representation (here, as
 colors).
 
     TILES = [AIR, EARTH, FIRE, WATER] = [0...4]
-    TEXTURES = ['#fff', '#855', '#f00', '#00f']
+    TEXTURES = ['#ddd', '#855', '#f55', '#69f']
 
 The game is displayed on a `Canvas Element` of the width and height specified by
 the constants defined earlier. We also need to attach it to the document to make
@@ -158,12 +180,6 @@ player to do that!
           break unless match(board, i, columns, rows)
       board
 
-    renderOptions =
-      offsetX: BOARD_OFFSET_X
-      offsetY: BOARD_OFFSET_Y
-      tileWidth: TILE_WIDTH
-      tileHeight: TILE_HEIGHT
-
 Switching tiles always involves two tiles.
 
     tile1 = null
@@ -171,6 +187,13 @@ Switching tiles always involves two tiles.
 
     switchTiles = (board, first, second) ->
       [board[first], board[second]] = [board[second], board[first]]
+
+We watch for click events on the canvas to switch tiles. We have be careful not
+to switch tiles that shouldn't, so we need to check a few things:
+- is the click even on a tile?
+- do we have two tiles?
+- are the two tiles adjacents?
+- do they even match?
 
     canvas.addEventListener('click', (e) ->
       canvasRect ?= canvas.getBoundingClientRect()
@@ -188,18 +211,20 @@ Switching tiles always involves two tiles.
       else tile2 = index
 
       return unless tile1? and tile2?
-      if board[tile1] in TILES and board[tile2] in TILES
-        if areAdjacents(tile1, tile2, COLUMNS)
-          switchTiles(board, tile1, tile2)
-          first = match(board, tile1, COLUMNS, ROWS)
-          second = match(board, tile2, COLUMNS, ROWS)
+      if areAdjacents(tile1, tile2, COLUMNS)
+        switchTiles(board, tile1, tile2)
+        first = match(board, tile1, COLUMNS, ROWS)
+        second = match(board, tile2, COLUMNS, ROWS)
 
-          # We switch back if there are no matches
-          switchTiles(board, tile1, tile2) unless first or second
+        # We switch back if there are no matches
+        switchTiles(board, tile1, tile2) unless first or second
       tile1 = tile2 = null
     )
 
-    board = generateBoard(COLUMNS, ROWS, TILES)
+Tiles that were matched are erased from the board, so we need new tiles to take
+their place and that's what this function is about. The check for 'matched'
+tiles is from bottom to top, and we make the tiles from the top come down, like
+a waterfall would.
 
     bringDown = (board, columns, rows, tiles) ->
       for i in [board.length - 1..0]
@@ -214,6 +239,17 @@ Switching tiles always involves two tiles.
         if board[i] is null
           board[i] = pick(tiles)
 
+Let's generate the board and store a few values for the rendering.
+
+    board = generateBoard(COLUMNS, ROWS, TILES)
+    renderOptions =
+      borderColor: '#fff'
+      borderSize: 3
+      offsetX: BOARD_OFFSET_X
+      offsetY: BOARD_OFFSET_Y
+      tileWidth: TILE_WIDTH
+      tileHeight: TILE_HEIGHT
+
     update = (dt) ->
       matches = []
       for i in [0...board.length]
@@ -221,6 +257,10 @@ Switching tiles always involves two tiles.
       board[i] = null for i in matches
 
       bringDown(board, COLUMNS, ROWS, TILES)
+
+    render = ->
+      drawBoard(board, COLUMNS, ctx, TEXTURES, renderOptions)
+      drawSelectedTile(ctx, COLUMNS, tile1, renderOptions)
 
 The main loop of the game.
 
@@ -238,6 +278,6 @@ The main loop of the game.
       while dt > mStep
         update(step)
         dt -= mStep
-      drawBoard(board, COLUMNS, ctx, TEXTURES, renderOptions)
+      render()
 
       requestAnimationFrame tick
