@@ -27,5 +27,8 @@
     "gulp-zip": "^2.0.1",
     "mold-source-map": "^0.3.0",
     "vinyl-source-stream": "^0.1.1"
+  },
+  "scripts": {
+    "publish": "git subtree push --prefix build/ origin gh-pages"
   }
 }
