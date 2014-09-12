@@ -102,7 +102,7 @@ the board array. We just need to take care of drawing it **where** we want to
 
     drawSelectedTile = (ctx, columns, width, height, tile, options) ->
       if tile?
-        drawTile(ctx, tile, columns, width, height, 'rgba(0,0,0,0.5)', options)
+        drawTile(ctx, tile, columns, width, height, SELECTION_COLOR, options)
 
     drawTile = (ctx, index, columns, width, height, color, options) ->
       {borderColor, borderSize, offsetX, offsetY} = options
@@ -120,8 +120,6 @@ the board array. We just need to take care of drawing it **where** we want to
       ctx.lineWidth = size
       ctx.strokeStyle = color
       ctx.strokeRect(x, y, width, height)
-
-=============================================================
 
     drawProgressBar = (ctx, value, max, x, y, width, height, color, options) ->
       {backgroundColor, borderColor, borderSize} = options
@@ -145,6 +143,22 @@ the board array. We just need to take care of drawing it **where** we want to
           ctx, current, max, x, y, width, height, color, options
         )
 
+    drawText = (ctx, text, x, y, color, options) ->
+      {align, baseline, font} = options
+
+      ctx.fillStyle = color
+      ctx.font = font
+      ctx.textAlign = align
+      ctx.textBaseLine = baseline
+      ctx.fillText(text, x, y)
+
+
+    getLastBest = ->
+      localStorage?.getItem('lastBestLvl') ? 0
+
+    setLastBest = (lvl) ->
+      localStorage?.setItem('lastBestLvl', lvl)
+
 The constants of the game speak mainly for themselves.
 We start by defining the size of the game screen and the targeted FPS.
 
@@ -154,9 +168,7 @@ We start by defining the size of the game screen and the targeted FPS.
     BACKGROUND_COLOR = '#fff'
     FPS = 60
 
-The next ones or more specific to the game. First, the size of the board in
-columns and rows, and then the size of the tiles. The offset values are for
-positionning the board on the screen.
+The next ones or more specific to the game's representation.
 
     ROWS = 10
     COLUMNS = 8
@@ -165,15 +177,9 @@ positionning the board on the screen.
     BOARD_OFFSET_X = TILE_WIDTH
     BOARD_OFFSET_Y = TILE_HEIGHT * 4
 
-Now we define the available types of tiles and their representation (here, as
-colors).
-
-    TILES = [AIR, EARTH, FIRE, WATER] = [0...4]
     TILE_BORDER_SIZE = 4
     TILE_BORDER_COLOR = '#fff'
     TEXTURES = ['#ddd', '#855', '#f55', '#69f']
-
-And those for the progress bars.
 
     BAR_WIDTH = TILE_WIDTH * 8
     BAR_HEIGHT = TILE_HEIGHT / 2
@@ -183,13 +189,20 @@ And those for the progress bars.
     BARS_OFFSET_X = TILE_WIDTH
     BARS_OFFSET_Y = TILE_HEIGHT * 2.5
 
+    GAME_TEXT_COLOR = '#444'
+    WINDOW_TEXT_COLOR = '#ddd'
+
+    SELECTION_COLOR = 'rgba(0,0,0,0.5)'
+    WINDOW_COLOR = 'rgba(4,4,4,0.9)'
+
 And finally the data the game will rely on for its logic.
 
+    TILES = [AIR, EARTH, FIRE, WATER] = [0...4]
     NEXT_LVL_BASE = 120
     BASE_POINTS = 2
     BASE_BONUS_MODIFIER = 2
     BASE_TIMER = 20000
-    TIMER_MODIFIER = 1.25
+    TIMER_MODIFIER = 1.1
 
 The game is displayed on a `Canvas Element` of the width and height specified by
 the constants defined earlier. We also need to attach it to the document to make
@@ -223,8 +236,15 @@ player to do that!
 
 ==================================================
 
-    running = yes
+    running = no
     gameOver = off
+
+    timer = null
+    exp = null
+    currentLvl = 0
+    points = 0
+    bonus = 0
+    lastBestLvl = 0
 
 Switching tiles always involves two tiles.
 
@@ -233,6 +253,21 @@ Switching tiles always involves two tiles.
 
     switchTiles = (board, first, second) ->
       [board[first], board[second]] = [board[second], board[first]]
+
+    reset = ->
+      timer =
+        color: '#2a8'
+        current: BASE_TIMER
+        max: BASE_TIMER
+      exp =
+        color: '#f95'
+        current: 0
+        max: NEXT_LVL_BASE
+      currentLvl = 1
+      points = BASE_POINTS
+      bonus = BASE_BONUS_MODIFIER
+      lastBestLvl = getLastBest()
+      gameOver = off
 
 We watch for click events on the canvas to switch tiles. We have be careful not
 to switch tiles that shouldn't, so we need to check a few things:
@@ -246,7 +281,10 @@ to switch tiles that shouldn't, so we need to check a few things:
       clickX = e.clientX - canvasRect.left
       clickY = e.clientY - canvasRect.top
 
-      return unless running is yes
+      if not running
+        running = yes
+        reset()
+        return
 
       x = Math.floor((clickX - BOARD_OFFSET_X) / TILE_WIDTH)
       y = Math.floor((clickY - BOARD_OFFSET_Y) / TILE_HEIGHT)
@@ -296,18 +334,6 @@ a waterfall would.
 There are two bars: one that represents the timer and one that shows how much
 experience until the next level.
 
-    timer =
-      color: '#2a8'
-      current: BASE_TIMER
-      max: BASE_TIMER
-    exp =
-      color: '#f95'
-      current: 0
-      max: NEXT_LVL_BASE
-    currentLvl = 1
-    points = BASE_POINTS
-    bonus = BASE_BONUS_MODIFIER
-
     barsRenderOpts =
       backgroundColor: BAR_BACKGROUND_COLOR
       borderColor: BAR_BORDER_COLOR
@@ -324,6 +350,8 @@ Let's generate the board and store a few values for the rendering.
       offsetX: BOARD_OFFSET_X
       offsetY: BOARD_OFFSET_Y
 
+    reset()
+
     update = (dt) ->
       return unless running is yes
 
@@ -332,6 +360,7 @@ Let's generate the board and store a few values for the rendering.
         timer.current = 0
         running = off
         gameOver = true
+        setLastBest(currentLvl) if currentLvl > getLastBest()
         return
 
       matches = []
@@ -349,7 +378,6 @@ Let's generate the board and store a few values for the rendering.
         currentLvl += 1
         exp.max *= currentLvl
         timer.current = timer.max = timer.max * TIMER_MODIFIER
-        console.log timer.max
 
       bringDown(board, COLUMNS, ROWS, TILES)
 
@@ -363,6 +391,52 @@ Let's generate the board and store a few values for the rendering.
       )
       drawSelectedTile(
         ctx, COLUMNS, TILE_WIDTH, TILE_HEIGHT, tile1, boardRenderOpts
+      )
+
+      if not running
+        fillRect(ctx,
+          BOARD_OFFSET_X,
+          BOARD_OFFSET_Y,
+          COLUMNS * TILE_WIDTH,
+          ROWS * TILE_HEIGHT,
+          WINDOW_COLOR
+        )
+        drawText(ctx, 'Click to start',
+          TILE_WIDTH * 1.2,
+          TILE_HEIGHT * 8,
+          WINDOW_TEXT_COLOR,
+          {align: 'left', font: 'bold 80px helvetica'}
+        )
+        drawText(ctx, 'a new game',
+          TILE_WIDTH * 1.4,
+          TILE_HEIGHT * 9,
+          WINDOW_TEXT_COLOR,
+          {align: 'left', font: 'bold 80px helvetica'}
+        )
+        drawText(ctx, 'Match 3 or more elements',
+          TILE_WIDTH * 2.12,
+          TILE_HEIGHT * 10.7,
+          WINDOW_TEXT_COLOR,
+          {align: 'left', font: 'bold 30px helvetica'}
+        )
+
+      drawText(ctx, "Level #{currentLvl}",
+        BOARD_OFFSET_X,
+        120,
+        GAME_TEXT_COLOR,
+        {align: 'left', font: 'bold 80px helvetica'}
+      )
+      drawText(ctx, "Last best: #{lastBestLvl}",
+        BOARD_OFFSET_X,
+        CANVAS_HEIGHT - 40,
+        GAME_TEXT_COLOR,
+        {align: 'left', font: 'bold 20px helvetica'}
+      )
+      drawText(ctx, '@Mickawesomesque',
+        CANVAS_WIDTH - BOARD_OFFSET_X,
+        CANVAS_HEIGHT - 40,
+        GAME_TEXT_COLOR,
+        {align: 'right', font: 'bold 20px helvetica'}
       )
 
 The main loop of the game.
