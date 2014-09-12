@@ -94,43 +94,64 @@ Drawing the board is as simple as iterating through all the tiles contained in
 the board array. We just need to take care of drawing it **where** we want to
 (offsets) and **how** (tile size) we want to.
 
-    drawBoard = (board, columns, ctx, textures, options) ->
+    drawBoard = (board, columns, ctx, tileW, tileH, textures, options) ->
       for i in [0...board.length]
-        drawTile(ctx, i, columns, textures[board[i]] ? '#000', options)
+        drawTile(
+          ctx, i, columns, tileW, tileH, textures[board[i]] ? '#000', options
+        )
 
-    drawTile = (ctx, index, columns, color, options) ->
-      {
-        borderColor
-        borderSize
-        offsetX
-        offsetY
-        tileWidth
-        tileHeight
-      } = options
+    drawSelectedTile = (ctx, columns, width, height, tile, options) ->
+      if tile?
+        drawTile(ctx, tile, columns, width, height, 'rgba(0,0,0,0.5)', options)
 
+    drawTile = (ctx, index, columns, width, height, color, options) ->
+      {borderColor, borderSize, offsetX, offsetY} = options
+      x = offsetX + getColumn(index, columns) * width
+      y = offsetY + getRow(index, columns) * height
+
+      fillRect(ctx, x, y, width, height, color)
+      strokeRect(ctx, x, y, width, height, borderColor, borderSize)
+
+    fillRect = (ctx, x, y, width, height, color) ->
       ctx.fillStyle = color
-      ctx.fillRect(
-        offsetX + getColumn(index, columns) * tileWidth
-        offsetY + getRow(index, columns) * tileHeight
-        tileWidth, tileHeight
-      )
-      ctx.lineWidth = borderSize
-      ctx.strokeStyle = borderColor
-      ctx.strokeRect(
-        offsetX + getColumn(index, columns) * tileWidth
-        offsetY + getRow(index, columns) * tileHeight
-        tileWidth, tileHeight
-      )
+      ctx.fillRect(x, y, width, height)
 
-    drawSelectedTile = (ctx, columns, tile, options) ->
-      drawTile(ctx, tile, columns, 'rgba(0,0,0,0.5)', options) if tile?
+    strokeRect = (ctx, x, y, width, height, color, size) ->
+      ctx.lineWidth = size
+      ctx.strokeStyle = color
+      ctx.strokeRect(x, y, width, height)
+
+=============================================================
+
+    drawProgressBar = (ctx, value, max, x, y, width, height, color, options) ->
+      {backgroundColor, borderColor, borderSize} = options
+      fill = value / max
+
+      fillRect(ctx, x, y, width, height, backgroundColor)
+      fillRect(ctx, x, y, fill * width, height, color)
+      strokeRect(ctx, x, y, width, height, borderColor, borderSize)
+
+
+    drawBars = (ctx, bars, width, height, options) ->
+      {offsetX, offsetY} = options
+
+      for bar, i in bars
+        {current, max, color} = bar
+        x = offsetX
+        y = offsetY + i * height
+        fill = bar.current / bar.max
+
+        drawProgressBar(
+          ctx, current, max, x, y, width, height, color, options
+        )
 
 The constants of the game speak mainly for themselves.
 We start by defining the size of the game screen and the targeted FPS.
 
     RATIO = 2
-    WIDTH = 320 * RATIO
-    HEIGHT = 480 * RATIO
+    CANVAS_WIDTH = 320 * RATIO
+    CANVAS_HEIGHT = 480 * RATIO
+    BACKGROUND_COLOR = '#fff'
     FPS = 60
 
 The next ones or more specific to the game. First, the size of the board in
@@ -139,8 +160,8 @@ positionning the board on the screen.
 
     ROWS = 10
     COLUMNS = 8
-    TILE_WIDTH = 32 * RATIO
-    TILE_HEIGHT = 32 * RATIO
+    TILE_WIDTH = CANVAS_WIDTH / 10
+    TILE_HEIGHT = TILE_WIDTH
     BOARD_OFFSET_X = TILE_WIDTH
     BOARD_OFFSET_Y = TILE_HEIGHT * 4
 
@@ -148,15 +169,35 @@ Now we define the available types of tiles and their representation (here, as
 colors).
 
     TILES = [AIR, EARTH, FIRE, WATER] = [0...4]
+    TILE_BORDER_SIZE = 4
+    TILE_BORDER_COLOR = '#fff'
     TEXTURES = ['#ddd', '#855', '#f55', '#69f']
+
+And those for the progress bars.
+
+    BAR_WIDTH = TILE_WIDTH * 8
+    BAR_HEIGHT = TILE_HEIGHT / 2
+    BAR_BACKGROUND_COLOR = '#eee'
+    BAR_BORDER_SIZE = 4
+    BAR_BORDER_COLOR = '#fff'
+    BARS_OFFSET_X = TILE_WIDTH
+    BARS_OFFSET_Y = TILE_HEIGHT * 2.5
+
+And finally the data the game will rely on for its logic.
+
+    NEXT_LVL_BASE = 120
+    BASE_POINTS = 2
+    BASE_BONUS_MODIFIER = 2
+    BASE_TIMER = 20000
+    TIMER_MODIFIER = 1.25
 
 The game is displayed on a `Canvas Element` of the width and height specified by
 the constants defined earlier. We also need to attach it to the document to make
 it visible.
 
     canvas = document.createElement('canvas')
-    canvas.width = WIDTH
-    canvas.height = HEIGHT
+    canvas.width = CANVAS_WIDTH
+    canvas.height = CANVAS_HEIGHT
 
     ctx = canvas.getContext('2d')
     canvasRect = null
@@ -180,6 +221,11 @@ player to do that!
           break unless match(board, i, columns, rows)
       board
 
+==================================================
+
+    running = yes
+    gameOver = off
+
 Switching tiles always involves two tiles.
 
     tile1 = null
@@ -199,6 +245,8 @@ to switch tiles that shouldn't, so we need to check a few things:
       canvasRect ?= canvas.getBoundingClientRect()
       clickX = e.clientX - canvasRect.left
       clickY = e.clientY - canvasRect.top
+
+      return unless running is yes
 
       x = Math.floor((clickX - BOARD_OFFSET_X) / TILE_WIDTH)
       y = Math.floor((clickY - BOARD_OFFSET_Y) / TILE_HEIGHT)
@@ -239,28 +287,83 @@ a waterfall would.
         if board[i] is null
           board[i] = pick(tiles)
 
+
+    getExp = (tiles, points, bonus) ->
+      total = points * 3
+      total += (tiles.length - 3) * bonus if tiles.length - 3 >= 0
+      total
+
+There are two bars: one that represents the timer and one that shows how much
+experience until the next level.
+
+    timer =
+      color: '#2a8'
+      current: BASE_TIMER
+      max: BASE_TIMER
+    exp =
+      color: '#f95'
+      current: 0
+      max: NEXT_LVL_BASE
+    currentLvl = 1
+    points = BASE_POINTS
+    bonus = BASE_BONUS_MODIFIER
+
+    barsRenderOpts =
+      backgroundColor: BAR_BACKGROUND_COLOR
+      borderColor: BAR_BORDER_COLOR
+      borderSize: BAR_BORDER_SIZE
+      offsetX: BARS_OFFSET_X
+      offsetY: BARS_OFFSET_Y
+
 Let's generate the board and store a few values for the rendering.
 
     board = generateBoard(COLUMNS, ROWS, TILES)
-    renderOptions =
-      borderColor: '#fff'
-      borderSize: 3
+    boardRenderOpts =
+      borderColor: TILE_BORDER_COLOR
+      borderSize: TILE_BORDER_SIZE
       offsetX: BOARD_OFFSET_X
       offsetY: BOARD_OFFSET_Y
-      tileWidth: TILE_WIDTH
-      tileHeight: TILE_HEIGHT
 
     update = (dt) ->
+      return unless running is yes
+
+      timer.current -= 1000 * dt
+      if timer.current <= 0
+        timer.current = 0
+        running = off
+        gameOver = true
+        return
+
       matches = []
       for i in [0...board.length]
         matches.push i if match(board, i, COLUMNS, ROWS)
       board[i] = null for i in matches
+      return unless matches.length > 0
+
+      exp.current += getExp(matches, points, bonus)
+      # Lvl up! \o/
+      if exp.current >= exp.max
+        exp.current = 0
+        points *= currentLvl
+        bonus += 1
+        currentLvl += 1
+        exp.max *= currentLvl
+        timer.current = timer.max = timer.max * TIMER_MODIFIER
+        console.log timer.max
 
       bringDown(board, COLUMNS, ROWS, TILES)
 
     render = ->
-      drawBoard(board, COLUMNS, ctx, TEXTURES, renderOptions)
-      drawSelectedTile(ctx, COLUMNS, tile1, renderOptions)
+      ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+      fillRect(ctx, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT, BACKGROUND_COLOR)
+
+      drawBars(ctx, [timer, exp], BAR_WIDTH, BAR_HEIGHT, barsRenderOpts)
+      drawBoard(
+        board, COLUMNS, ctx, TILE_WIDTH, TILE_HEIGHT, TEXTURES, boardRenderOpts
+      )
+      drawSelectedTile(
+        ctx, COLUMNS, TILE_WIDTH, TILE_HEIGHT, tile1, boardRenderOpts
+      )
 
 The main loop of the game.
 
@@ -279,5 +382,4 @@ The main loop of the game.
         update(step)
         dt -= mStep
       render()
-
       requestAnimationFrame tick
