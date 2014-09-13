@@ -6,7 +6,7 @@ A simple match-3 for you to become THE Elementalist! Gain levels by matching 3 o
 [Entry][entry-page] for the [Js13k][js13k-website] competition. Go read the [source code][source]!
 
 ![screen-01](screenshots/Elementalist-01.png?raw=true)
-![screen-02](screenshots/Elementalist-02.pngraw=true)
+![screen-02](screenshots/Elementalist-02.png?raw=true)
 
 [entry-page]: http://js13kgames.com/entries/elementalist
 [js13k-website]: http://js13kgames.com/
